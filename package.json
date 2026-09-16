@@ -1,0 +1,14 @@
+{
+  "name": "remont-do-otsechki",
+  "version": "1.0.0",
+  "description": "Автосервис Remont_do_otsechki — лендинг + минимальный backend",
+  "main": "server.js",
+  "scripts": {
+    "start": "node server.js",
+    "dev": "node server.js"
+  },
+  "dependencies": {
+    "better-sqlite3": "^13.0.3",
+    "express": "^4.19.2"
+  }
+}

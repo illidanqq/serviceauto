@@ -1,0 +1,144 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Админка — Заявки | Remont_do_otsechki</title>
+    <style>
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+        body {
+            font-family: 'Segoe UI', Arial, sans-serif;
+            background: #f4f5f7;
+            color: #222;
+            padding: 32px 20px;
+        }
+        .wrap { max-width: 960px; margin: 0 auto; }
+        header {
+            display: flex; justify-content: space-between; align-items: center;
+            gap: 16px; margin-bottom: 24px; flex-wrap: wrap;
+        }
+        h1 { font-size: 24px; }
+        .actions { display: flex; gap: 10px; align-items: center; }
+        .last-update { font-size: 13px; color: #888; }
+        button {
+            background: #e63946; color: #fff; border: none;
+            padding: 10px 18px; border-radius: 8px; cursor: pointer;
+            font-size: 14px; font-weight: 600;
+        }
+        button:hover { background: #c0313d; }
+        table {
+            width: 100%; border-collapse: collapse; background: #fff;
+            border-radius: 12px; overflow: hidden; box-shadow: 0 2px 12px rgba(0,0,0,0.06);
+        }
+        th, td { text-align: left; padding: 14px 16px; font-size: 14px; }
+        th {
+            background: #1a1a2e; color: #fff; font-weight: 600;
+            font-size: 13px; text-transform: uppercase; letter-spacing: .5px;
+        }
+        tr { border-bottom: 1px solid #eef0f2; }
+        tr:last-child { border-bottom: none; }
+        tr:hover { background: #fafbfc; }
+        .empty {
+            text-align: center; padding: 48px; color: #888;
+            background: #fff; border-radius: 12px;
+        }
+        .badge {
+            display: inline-block; background: #f0f1f3; color: #555;
+            padding: 4px 10px; border-radius: 20px; font-size: 12px;
+        }
+        .error-box {
+            background: #fdecea; color: #b00020; padding: 14px 18px;
+            border-radius: 10px; margin-bottom: 20px; font-size: 14px;
+        }
+        .count { font-size: 14px; color: #555; }
+        @media (max-width: 640px) {
+            table, thead { display: block; }
+            thead { display: none; }
+            tbody { display: block; }
+            tr { display: block; border-bottom: 1px solid #eee; padding: 10px 0; }
+            td { display: flex; justify-content: space-between; gap: 12px; border: none; padding: 6px 14px; }
+            td::before { content: attr(data-label); font-weight: 700; color: #888; }
+        }
+    </style>
+</head>
+<body>
+    <div class="wrap">
+        <header>
+            <div>
+                <h1>Заявки с сайта</h1>
+                <div class="count" id="count"></div>
+            </div>
+            <div class="actions">
+                <span class="last-update" id="lastUpdate"></span>
+                <button onclick="loadAppointments()">Обновить</button>
+            </div>
+        </header>
+        <div class="error-box" id="errorBox" style="display:none"></div>
+        <div id="content"></div>
+    </div>
+
+    <script>
+        const errorBox = document.getElementById('errorBox');
+        const content = document.getElementById('content');
+        const countEl = document.getElementById('count');
+        const lastUpdateEl = document.getElementById('lastUpdate');
+
+        function fmtDate(iso) {
+            if (!iso) return '';
+            return iso.replace('T', ' ').slice(0, 19);
+        }
+
+        function setError(msg) {
+            errorBox.style.display = 'block';
+            errorBox.textContent = msg;
+        }
+
+        async function loadAppointments() {
+            try {
+                const res = await fetch('/api/appointments', { credentials: 'same-origin' });
+                if (res.status === 401) {
+                    setError('Нет доступа. Войдите через страницу /admin (логин и пароль).');
+                    return;
+                }
+                if (!res.ok) throw new Error('Server error');
+                const rows = await res.json();
+                errorBox.style.display = 'none';
+
+                countEl.textContent = 'Всего заявок: ' + rows.length;
+                lastUpdateEl.textContent = 'Обновлено: ' + new Date().toLocaleTimeString();
+
+                if (rows.length === 0) {
+                    content.innerHTML = '<div class="empty">Заявок пока нет.</div>';
+                    return;
+                }
+
+                const rowsHtml = rows.map(r =>
+                    '<tr>' +
+                        '<td data-label="ID">' + r.id + '</td>' +
+                        '<td data-label="Имя">' + escapeHtml(r.name) + '</td>' +
+                        '<td data-label="Телефон"><a href="tel:' + escapeHtml(r.phone) + '">' + escapeHtml(r.phone) + '</a></td>' +
+                        '<td data-label="Услуга"><span class="badge">' + escapeHtml(r.service || '—') + '</span></td>' +
+                        '<td data-label="Дата">' + fmtDate(r.created_at) + '</td>' +
+                    '</tr>'
+                ).join('');
+
+                content.innerHTML =
+                    '<table><thead><tr>' +
+                        '<th>ID</th><th>Имя</th><th>Телефон</th><th>Услуга</th><th>Дата</th>' +
+                    '</tr></thead><tbody>' + rowsHtml + '</tbody></table>';
+            } catch (err) {
+                setError('Не удалось загрузить заявки: ' + err.message);
+            }
+        }
+
+        function escapeHtml(s) {
+            return String(s).replace(/[&<>"']/g, ch => (
+                { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[ch]
+            ));
+        }
+
+        loadAppointments();
+        setInterval(loadAppointments, 15000);
+    </script>
+</body>
+</html>
