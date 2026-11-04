@@ -54,6 +54,21 @@ function Header() {
         return () => window.removeEventListener('scroll', onScroll);
     }, []);
 
+    // Пока мобильное меню открыто, страница под ним не прокручивается; Esc и расширение окна закрывают меню
+    useEffect(() => {
+        document.body.classList.toggle('menu-open', open);
+        if (!open) return;
+        const onKey = (e) => { if (e.key === 'Escape') setOpen(false); };
+        const onResize = () => { if (window.innerWidth > 1024) setOpen(false); };
+        window.addEventListener('keydown', onKey);
+        window.addEventListener('resize', onResize);
+        return () => {
+            window.removeEventListener('keydown', onKey);
+            window.removeEventListener('resize', onResize);
+            document.body.classList.remove('menu-open');
+        };
+    }, [open]);
+
     const navItems = [
         { href: '#services', label: t.services },
         { href: '#about', label: t.about },
@@ -82,7 +97,13 @@ function Header() {
                             }}>{item.label}</a></li>
                         ))}
                     </ul>
+                    <a href="#appointment" className="btn btn-primary btn-lg nav-cta" tabIndex={open ? 0 : -1} onClick={(e) => {
+                        e.preventDefault();
+                        setOpen(false);
+                        document.querySelector('#appointment')?.scrollIntoView({ behavior: 'smooth' });
+                    }}>{t.bookNow}</a>
                 </nav>
+                <div className={`nav-backdrop ${open ? 'open' : ''}`} onClick={() => setOpen(false)} aria-hidden="true"></div>
                 <div className="header-actions">
                     <div className="lang-switch header-lang">
                         <span className={`lang ${lang === 'ru' ? 'active' : ''}`} onClick={() => setLang('ru')}>RU</span>
@@ -93,7 +114,7 @@ function Header() {
                         document.querySelector('#appointment')?.scrollIntoView({ behavior: 'smooth' });
                     }}>{t.bookNow}</a>
                 </div>
-                <button className={`burger ${open ? 'active' : ''}`} id="burger" aria-label="Menu" onClick={() => setOpen(!open)}>
+                <button className={`burger ${open ? 'active' : ''}`} id="burger" aria-label="Menu" aria-expanded={open} aria-controls="nav" onClick={() => setOpen(prev => !prev)}>
                     <span></span><span></span><span></span>
                 </button>
             </div>
@@ -262,7 +283,8 @@ function PriceCalculator() {
 
     const filtered = filterCat === 'all' ? t.calcServices : t.calcServices.filter(s => s.category === filterCat);
 
-    const total = filtered.reduce((sum, s) => sum + (selected[s.id] ? s.price : 0), 0);
+    // Сумма считается по всем выбранным услугам, а не только по видимым в текущей категории
+    const total = t.calcServices.reduce((sum, s) => sum + (selected[s.id] ? s.price : 0), 0);
     const discount = promoApplied ? Math.round(total * 0.1) : 0;
     const finalTotal = total - discount;
 
@@ -338,7 +360,7 @@ function AppointmentForm() {
         const e = {};
         if (!name.trim()) e.name = t.formErrors.nameRequired;
         if (!phone.trim()) e.phone = t.formErrors.phoneRequired;
-        else if (!/^[\+]?[0-9\s\-\(\)]{7,15}$/.test(phone.trim())) e.phone = t.formErrors.phoneInvalid;
+        else if (!/^[\+]?[0-9\s\-\(\)]{7,20}$/.test(phone.trim()) || phone.replace(/\D/g, '').length < 7) e.phone = t.formErrors.phoneInvalid;
         if (!consent) e.consent = t.formErrors.consentRequired;
         return e;
     };
@@ -464,13 +486,19 @@ function BrandsSlider() {
         return 5;
     }, []);
 
+    // Ширина карточек пересчитывается при изменении размера окна и повороте телефона
     useEffect(() => {
-        if (!trackRef.current || !viewportRef.current) return;
-        const items = [...trackRef.current.children];
-        const vis = getVisible();
-        const w = (viewportRef.current.offsetWidth - gap * (vis - 1)) / vis;
-        setItemW(w);
-        items.forEach(el => el.style.flex = '0 0 ' + w + 'px');
+        const measure = () => {
+            if (!trackRef.current || !viewportRef.current) return;
+            const items = [...trackRef.current.children];
+            const vis = getVisible();
+            const w = (viewportRef.current.offsetWidth - gap * (vis - 1)) / vis;
+            setItemW(w);
+            items.forEach(el => el.style.flex = '0 0 ' + w + 'px');
+        };
+        measure();
+        window.addEventListener('resize', measure);
+        return () => window.removeEventListener('resize', measure);
     }, [getVisible]);
 
     const offset = idx * (itemW + gap);
@@ -639,7 +667,7 @@ function FAQ() {
                 </div>
                 <div className="faq-list">
                     {t.faqItems.map((item, i) => (
-                        <div className={'faq-item' + (active === i ? ' active' : '')} key={i}>
+                        <div className={`faq-item ${active === i ? 'active' : ''}`} key={i}>
                             <div className="faq-question" onClick={() => setActive(active === i ? null : i)}>
                                 <span>{item.q}</span>
                                 <i className="fas fa-chevron-down faq-icon"></i>
