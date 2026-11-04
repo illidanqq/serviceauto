@@ -53,7 +53,7 @@ app.post('/api/appointments', (req, res) => {
     if (!trimmedName) {
         return res.status(400).json({ error: 'name is required' });
     }
-    if (!trimmedPhone || !/^[\+]?[0-9\s\-\(\)]{7,15}$/.test(trimmedPhone)) {
+    if (!trimmedPhone || !/^[\+]?[0-9\s\-\(\)]{7,20}$/.test(trimmedPhone) || trimmedPhone.replace(/\D/g, '').length < 7) {
         return res.status(400).json({ error: 'phone is required or invalid' });
     }
 
