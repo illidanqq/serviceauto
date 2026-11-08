@@ -289,7 +289,7 @@ function PriceCalculator() {
     const finalTotal = total - discount;
 
     const applyPromo = () => {
-        if (t.promoCodes.includes(promo.toUpperCase())) {
+        if (t.promoCodes.includes(promo.trim().toUpperCase())) {
             setPromoApplied(true);
             setPromoMsg('success');
         } else {
@@ -887,7 +887,8 @@ function Modal({ active, onClose }) {
 
 function App() {
     const [lang, setLang] = useState('ru');
-    const t = TRANSLATIONS[lang];
+    // Если перевода для языка нет, используем русский, чтобы сайт не падал
+    const t = TRANSLATIONS[lang] || TRANSLATIONS.ru;
     const [modalActive, setModalActive] = useState(false);
 
     return (
