@@ -1,14 +1,17 @@
 {
   "name": "remont-do-otsechki",
   "version": "1.0.0",
-  "description": "Автосервис Remont_do_otsechki — лендинг + минимальный backend",
+  "description": "Автосервис Remont_do_otsechki — лендинг + backend (Express, MongoDB)",
   "main": "server.js",
   "scripts": {
     "start": "node server.js",
     "dev": "node server.js"
   },
   "dependencies": {
-    "better-sqlite3": "^12.11.1",
-    "express": "^4.19.2"
+    "express": "^4.19.2",
+    "mongodb": "^6.22.0"
+  },
+  "engines": {
+    "node": ">=20.12"
   }
 }
