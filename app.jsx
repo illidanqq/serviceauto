@@ -10,18 +10,183 @@ function useLang() {
     return useContext(LanguageContext);
 }
 
-function submitAppointment(data) {
-    return fetch('/api/appointments', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(data),
-    }).then(res => {
-        if (!res.ok) throw new Error('request failed');
-        return res.json();
-    }).catch(() => {
-        console.warn('Backend unavailable, appointment saved locally only');
-        return { ok: true, local: true };
-    });
+async function submitAppointment(data) {
+    try {
+        const res = await fetch('/api/appointments', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(data),
+        });
+        const body = await res.json().catch(() => ({}));
+        if (res.ok) return { ok: true, id: body.id };
+        return { ok: false, error: body.error === 'slot_taken' ? 'slot_taken' : 'failed' };
+    } catch (err) {
+        return { ok: false, error: 'failed' };
+    }
+}
+
+function todayAlmaty(offsetDays = 0) {
+    const d = new Date(Date.now() + offsetDays * 86400000);
+    return new Intl.DateTimeFormat('en-CA', { timeZone: 'Asia/Almaty', year: 'numeric', month: '2-digit', day: '2-digit' }).format(d);
+}
+
+function formatDate(iso) {
+    return iso ? iso.split('-').reverse().join('.') : '';
+}
+
+function useSlots(date) {
+    const [state, setState] = useState({ status: 'idle', slots: [] });
+    const [reloadKey, setReloadKey] = useState(0);
+    useEffect(() => {
+        if (!date) { setState({ status: 'idle', slots: [] }); return; }
+        let cancelled = false;
+        setState({ status: 'loading', slots: [] });
+        fetch('/api/slots?date=' + encodeURIComponent(date))
+            .then(res => { if (!res.ok) throw new Error(); return res.json(); })
+            .then(data => {
+                if (cancelled) return;
+                if (data.closed) setState({ status: 'closed', slots: [] });
+                else setState({ status: data.slots.some(s => s.available) ? 'ready' : 'none', slots: data.slots });
+            })
+            .catch(() => { if (!cancelled) setState({ status: 'error', slots: [] }); });
+        return () => { cancelled = true; };
+    }, [date, reloadKey]);
+    return [state, () => setReloadKey(k => k + 1)];
+}
+
+function BookingForm({ variant = 'section', onDone }) {
+    const t = useT();
+    const empty = { name: '', phone: '', car: '', service: '', date: '', time: '' };
+    const [values, setValues] = useState(empty);
+    const [consent, setConsent] = useState(false);
+    const [errors, setErrors] = useState({});
+    const [sending, setSending] = useState(false);
+    const [success, setSuccess] = useState(null);
+    const [slots, reloadSlots] = useSlots(values.date);
+
+    const set = (field) => (e) => {
+        const value = e.target.value;
+        setValues(v => ({ ...v, [field]: value, ...(field === 'date' ? { time: '' } : {}) }));
+    };
+
+    const validate = () => {
+        const e = {};
+        if (!values.name.trim()) e.name = t.formErrors.nameRequired;
+        if (!values.phone.trim()) e.phone = t.formErrors.phoneRequired;
+        else if (!/^[\+]?[0-9\s\-\(\)]{7,20}$/.test(values.phone.trim()) || values.phone.replace(/\D/g, '').length < 7) e.phone = t.formErrors.phoneInvalid;
+        if (values.date && !values.time) e.time = t.formErrors.timeRequired;
+        if (!consent) e.consent = t.formErrors.consentRequired;
+        return e;
+    };
+
+    const handleSubmit = async (e) => {
+        e.preventDefault();
+        const errs = validate();
+        setErrors(errs);
+        if (Object.keys(errs).length > 0 || sending) return;
+
+        setSending(true);
+        const result = await submitAppointment(values);
+        setSending(false);
+
+        if (result.ok) {
+            setSuccess({ date: values.date, time: values.time });
+            setValues(empty);
+            setConsent(false);
+        } else if (result.error === 'slot_taken') {
+            setErrors({ time: t.formErrors.slotTaken });
+            setValues(v => ({ ...v, time: '' }));
+            reloadSlots();
+        } else {
+            setErrors({ submit: t.formErrors.submitFailed });
+        }
+    };
+
+    if (success) {
+        const msg = success.date
+            ? t.formSuccessSlot.replace('{date}', formatDate(success.date)).replace('{time}', success.time)
+            : t.formSuccess;
+        return (
+            <div className="form-success-msg">
+                <i className="fas fa-check-circle"></i>
+                <p>{msg}</p>
+                {variant === 'section' && (
+                    <button className="btn btn-primary btn-lg" onClick={() => setSuccess(null)}>{t.bookNow}</button>
+                )}
+                {variant === 'modal' && onDone && (
+                    <button className="btn btn-primary btn-lg" onClick={onDone}>OK</button>
+                )}
+            </div>
+        );
+    }
+
+    const slotsHint = {
+        loading: t.slotsLoading,
+        closed: t.slotsClosed,
+        none: t.slotsNone,
+        error: t.slotsError,
+    }[slots.status];
+
+    return (
+        <form className={variant === 'modal' ? 'modal-form' : 'appointment-form'} onSubmit={handleSubmit} noValidate>
+            <div className={`form-group ${errors.name ? 'has-error' : ''}`}>
+                <input type="text" placeholder={t.formName} value={values.name} onChange={set('name')} autoComplete="name" />
+                {errors.name && <span className="field-error">{errors.name}</span>}
+            </div>
+            <div className={`form-group ${errors.phone ? 'has-error' : ''}`}>
+                <input type="tel" placeholder={t.formPhone} value={values.phone} onChange={set('phone')} autoComplete="tel" />
+                {errors.phone && <span className="field-error">{errors.phone}</span>}
+            </div>
+            <div className="form-group">
+                <input type="text" placeholder={t.formCar} value={values.car} onChange={set('car')} maxLength={100} />
+            </div>
+            <div className="form-group">
+                <select value={values.service} onChange={set('service')}>
+                    <option value="">{t.formService}</option>
+                    {t.serviceOptions.map((opt, i) => <option key={i} value={opt}>{opt}</option>)}
+                </select>
+            </div>
+            <div className="form-group">
+                <label className="form-label">{t.formDate}</label>
+                <input type="date" value={values.date} onChange={set('date')} min={todayAlmaty()} max={todayAlmaty(30)} />
+            </div>
+            {values.date && (
+                <div className={`form-group ${errors.time ? 'has-error' : ''}`}>
+                    {slots.status === 'ready' && (
+                        <>
+                            <label className="form-label">{t.formTime}</label>
+                            <div className="slot-grid" role="radiogroup" aria-label={t.formTime}>
+                                {slots.slots.map(s => (
+                                    <button
+                                        type="button"
+                                        key={s.time}
+                                        role="radio"
+                                        aria-checked={values.time === s.time}
+                                        className={`slot-btn ${values.time === s.time ? 'selected' : ''}`}
+                                        disabled={!s.available}
+                                        onClick={() => setValues(v => ({ ...v, time: s.time }))}
+                                    >{s.time}</button>
+                                ))}
+                            </div>
+                        </>
+                    )}
+                    {slotsHint && <span className="slot-hint">{slotsHint}</span>}
+                    {errors.time && <span className="field-error">{errors.time}</span>}
+                </div>
+            )}
+            <div className={`form-group checkbox-group ${errors.consent ? 'has-error' : ''}`}>
+                <label className={variant === 'modal' ? 'checkbox-label' : undefined}>
+                    <input type="checkbox" checked={consent} onChange={e => setConsent(e.target.checked)} />
+                    <span>{t.formConsent}</span>
+                </label>
+                {errors.consent && <span className="field-error">{errors.consent}</span>}
+            </div>
+            {errors.submit && <div className="form-submit-error">{errors.submit}</div>}
+            <button type="submit" className="btn btn-primary btn-lg btn-block" disabled={sending}>
+                {sending ? t.formSending : t.formSubmit}
+            </button>
+        </form>
+    );
 }
 
 function TopBar() {
@@ -54,7 +219,6 @@ function Header() {
         return () => window.removeEventListener('scroll', onScroll);
     }, []);
 
-    // Пока мобильное меню открыто, страница под ним не прокручивается; Esc и расширение окна закрывают меню
     useEffect(() => {
         document.body.classList.toggle('menu-open', open);
         if (!open) return;
@@ -231,7 +395,7 @@ function Services() {
                 </div>
                 <div className="services-grid">
                     {filtered.map((s) => (
-                        <article className="service-card fade-up visible" key={s.key}>
+                        <article className="service-card fade-up" key={s.key}>
                             <div className="service-photo">
                                 <img src={s.img} alt={t.serviceNames[s.key]} />
                             </div>
@@ -260,7 +424,7 @@ function WhyUs() {
                 </div>
                 <div className="why-grid">
                     {t.whyItems.map((item, i) => (
-                        <div className="why-card fade-up visible" key={i}>
+                        <div className="why-card fade-up" key={i}>
                             <div className="why-number">{item.number}</div>
                             <div className="why-text">{item.text}</div>
                         </div>
@@ -349,33 +513,6 @@ function PriceCalculator() {
 
 function AppointmentForm() {
     const t = useT();
-    const [name, setName] = useState('');
-    const [phone, setPhone] = useState('');
-    const [service, setService] = useState('');
-    const [consent, setConsent] = useState(false);
-    const [errors, setErrors] = useState({});
-    const [submitted, setSubmitted] = useState(false);
-
-    const validate = () => {
-        const e = {};
-        if (!name.trim()) e.name = t.formErrors.nameRequired;
-        if (!phone.trim()) e.phone = t.formErrors.phoneRequired;
-        else if (!/^[\+]?[0-9\s\-\(\)]{7,20}$/.test(phone.trim()) || phone.replace(/\D/g, '').length < 7) e.phone = t.formErrors.phoneInvalid;
-        if (!consent) e.consent = t.formErrors.consentRequired;
-        return e;
-    };
-
-    const handleSubmit = (e) => {
-        e.preventDefault();
-        const errs = validate();
-        setErrors(errs);
-        if (Object.keys(errs).length === 0) {
-            submitAppointment({ name, phone, service });
-            setSubmitted(true);
-            setName(''); setPhone(''); setService(''); setConsent(false);
-        }
-    };
-
     return (
         <section className="cta-appointment" id="appointment">
             <div className="container">
@@ -385,38 +522,7 @@ function AppointmentForm() {
                         <p>{t.ctaDesc}</p>
                     </div>
                     <div className="cta-form-wrapper">
-                        {submitted ? (
-                            <div className="form-success-msg">
-                                <i className="fas fa-check-circle"></i>
-                                <p>{t.formSuccess}</p>
-                                <button className="btn btn-primary btn-lg" onClick={() => setSubmitted(false)}>{t.bookNow}</button>
-                            </div>
-                        ) : (
-                            <form className="appointment-form" onSubmit={handleSubmit}>
-                                <div className={`form-group ${errors.name ? 'has-error' : ''}`}>
-                                    <input type="text" placeholder={t.formName} value={name} onChange={e => setName(e.target.value)} />
-                                    {errors.name && <span className="field-error">{errors.name}</span>}
-                                </div>
-                                <div className={`form-group ${errors.phone ? 'has-error' : ''}`}>
-                                    <input type="tel" placeholder={t.formPhone} value={phone} onChange={e => setPhone(e.target.value)} />
-                                    {errors.phone && <span className="field-error">{errors.phone}</span>}
-                                </div>
-                                <div className="form-group">
-                                    <select value={service} onChange={e => setService(e.target.value)}>
-                                        <option value="">{t.formService}</option>
-                                        {t.serviceOptions.map((opt, i) => <option key={i} value={opt}>{opt}</option>)}
-                                    </select>
-                                </div>
-                                <div className={`form-group checkbox-group ${errors.consent ? 'has-error' : ''}`}>
-                                    <label>
-                                        <input type="checkbox" checked={consent} onChange={e => setConsent(e.target.checked)} />
-                                        <span>{t.formConsent}</span>
-                                    </label>
-                                    {errors.consent && <span className="field-error">{errors.consent}</span>}
-                                </div>
-                                <button type="submit" className="btn btn-primary btn-lg btn-block">{t.formSubmit}</button>
-                            </form>
-                        )}
+                        <BookingForm variant="section" />
                     </div>
                 </div>
             </div>
@@ -443,7 +549,7 @@ function Reviews() {
                 </div>
                 <div className="reviews-slider">
                     {REVIEWS_DATA.map((r, i) => (
-                        <div className="review-card fade-up visible" key={i}>
+                        <div className="review-card fade-up" key={i}>
                             <div className="review-stars">
                                 {[...Array(5)].map((_, j) => {
                                     if (j < Math.floor(r.stars)) return <i className="fas fa-star" key={j}></i>;
@@ -464,6 +570,32 @@ function Reviews() {
                 </div>
             </div>
         </section>
+    );
+}
+
+// Логотипы из открытого набора Simple Icons; у марок без логотипа остаётся название текстом
+const BRAND_LOGOS = {
+    Toyota: { slug: "toyota", color: "#EB0A1E" },
+    Hyundai: { slug: "hyundai", color: "#002C5F" },
+    Kia: { slug: "kia", color: "#05141F" },
+    Mitsubishi: { slug: "mitsubishi", color: "#E60012" },
+    Honda: { slug: "honda", color: "#E40521" },
+    Nissan: { slug: "nissan", color: "#C3002F" },
+    Mazda: { slug: "mazda", color: "#101010" },
+    Subaru: { slug: "subaru", color: "#013C74" },
+    Chevrolet: { slug: "chevrolet", color: "#CD9834" },
+};
+const BRAND_ICON_CDN = "https://cdn.jsdelivr.net/npm/simple-icons@13.21.0/icons/";
+
+function BrandItem({ name }) {
+    const logo = BRAND_LOGOS[name];
+    return (
+        <div className="brand-item" title={name} style={logo ? { "--brand": logo.color } : undefined}>
+            {logo
+                ? <span className="brand-logo" role="img" aria-label={name} style={{ "--logo": "url(" + BRAND_ICON_CDN + logo.slug + ".svg)" }}></span>
+                : <span className="brand-wordmark">{name}</span>}
+            <span className="brand-name">{name}</span>
+        </div>
     );
 }
 
@@ -535,9 +667,9 @@ function BrandsSlider() {
                     </button>
                     <div className="brands-viewport" ref={viewportRef}>
                         <div className={'brands-track' + (animating ? ' is-animating' : '')} ref={trackRef} style={{ transform: 'translateX(-' + offset + 'px)' }} onTransitionEnd={onTransitionEnd}>
-                            {BRANDS.map((b, i) => <div className="brand-item" key={'o-' + i}><span>{b}</span></div>)}
-                            {BRANDS.map((b, i) => <div className="brand-item" key={'c-' + i}><span>{b}</span></div>)}
-                            {BRANDS.map((b, i) => <div className="brand-item" key={'d-' + i}><span>{b}</span></div>)}
+                            {BRANDS.map((b, i) => <BrandItem name={b} key={'o-' + i} />)}
+                            {BRANDS.map((b, i) => <BrandItem name={b} key={'c-' + i} />)}
+                            {BRANDS.map((b, i) => <BrandItem name={b} key={'d-' + i} />)}
                         </div>
                     </div>
                     <button className="brands-nav brands-next" onClick={() => go(idx + 1)}>
@@ -560,7 +692,7 @@ function Stages() {
                 </div>
                 <div className="stages-timeline">
                     {t.stages.map((s, i) => (
-                        <div className="stage-item fade-up visible" key={i}>
+                        <div className="stage-item fade-up" key={i}>
                             <div className="stage-number">{i + 1}</div>
                             <div className="stage-content">
                                 <h3>{s.title}</h3>
@@ -622,7 +754,7 @@ function Prices() {
                 </div>
                 <div className="prices-grid">
                     {PRICE_DATA.map((p, i) => (
-                        <div className="price-card fade-up visible" key={i}>
+                        <div className="price-card fade-up" key={i}>
                             <div className="price-icon"><i className={p.icon}></i></div>
                             <div className="price-info">
                                 <h3>{priceNames[lang][p.key]}</h3>
@@ -689,9 +821,38 @@ const NEWS_DATA = [
     { img: 'src/news3.png', date: '20.07.2025', title: { ru: '\u041A\u0443\u0440\u0441 \u043F\u043E \u0440\u0435\u043C\u043E\u043D\u0442\u0443 \u043A\u043E\u043D\u0434\u0438\u0446\u0438\u043E\u043D\u0435\u0440\u0430 \u0432 \u041A\u044B\u0440\u0433\u044B\u0437\u0441\u0442\u0430\u043D\u0435', kz: '\u049A\u044B\u0440\u04B9\u0437\u0441\u0442\u0430\u043D\u0434\u0430 \u043A\u043E\u043D\u0434\u0438\u0446\u0438\u043E\u043D\u0435\u0440\u0434\u0456 \u0436\u04B9\u043D\u0434\u0435\u0443 \u043A\u0443\u0440\u0441\u044B' }, desc: { ru: '\u041F\u0440\u043E\u0448\u043B\u0438 \u043E\u0431\u0443\u0447\u0435\u043D\u0438\u0435 \u043F\u043E \u0440\u0435\u043C\u043E\u043D\u0442\u0443 \u0441\u0438\u0441\u0442\u0435\u043C \u043A\u043E\u043D\u0434\u0438\u0446\u0438\u043E\u043D\u0438\u0440\u043E\u0432\u0430\u043D\u0438\u044F', kz: '\u041A\u043E\u043D\u0434\u0438\u0446\u0438\u043E\u043D\u0435\u0440 \u0436\u04B9\u0439\u0435\u043B\u0435\u0440\u0456\u043D \u0436\u04B9\u043D\u0434\u0435\u0443 \u0431\u043E\u0439\u044B\u043D\u0448\u0430 \u043E\u043A\u0443\u0434\u0430\u043D \u04B9\u0442\u0442\u0456\u043A' } },
 ];
 
+// Полный текст новостей (по индексу в NEWS_DATA). Замените на реальный текст.
+const NEWS_BODY = [
+    {
+        ru: "Наши мастера прошли курсы повышения квалификации по диагностике и ремонту современных автомобилей. Мы изучили новое диагностическое оборудование, актуальные методики работы с электроникой и системами впрыска. Полученные знания уже применяем в работе — это позволяет быстрее находить причину неисправности и точнее оценивать стоимость ремонта.",
+        kz: "Біздің шеберлер заманауи автокөліктерді диагностикалау және жөндеу бойынша біліктілікті арттыру курстарынан өтті. Жаңа диагностикалық жабдықты, электроника мен бүрку жүйелерімен жұмыс істеудің өзекті әдістерін үйрендік. Алған білімімізді жұмыста қолданып жүрміз — бұл ақаудың себебін тезірек табуға және жөндеу құнын дәлірек бағалауға мүмкіндік береді.",
+    },
+    {
+        ru: "Мы расширяем географию: теперь наши специалисты выполняют обслуживание автокондиционеров и в Узбекистане. Проверка герметичности системы, заправка хладагентом, замена фильтров и антибактериальная обработка — с тем же качеством и гарантией, что и в Алматы.",
+        kz: "Біз қызмет көрсету аумағын кеңейтеміз: енді біздің мамандар Өзбекстанда да автокондиционерлерге қызмет көрсетеді. Жүйенің саңылаусыздығын тексеру, хладагентпен толтыру, сүзгілерді ауыстыру және бактерияға қарсы өңдеу — Алматыдағыдай сапамен және кепілдікпен.",
+    },
+    {
+        ru: "Команда прошла специализированный курс по ремонту систем кондиционирования в Кыргызстане. Разобрали типичные неисправности компрессоров, поиск утечек и работу с новыми типами хладагента. Это позволяет нам браться за более сложный ремонт и делать его быстрее.",
+        kz: "Команда Қырғызстанда кондиционерлеу жүйелерін жөндеу бойынша арнайы курстан өтті. Компрессорлардың типтік ақауларын, ағып кетуді іздеуді және хладагенттің жаңа түрлерімен жұмысты талдадық. Бұл күрделірек жөндеуді қолға алуға және оны тезірек орындауға мүмкіндік береді.",
+    },
+];
+const NEWS_VISIBLE = 3;
+
 function News() {
     const t = useT();
     const { lang } = useLang();
+    const [openIndex, setOpenIndex] = useState(null);
+    const [showAll, setShowAll] = useState(false);
+    const list = showAll ? NEWS_DATA : NEWS_DATA.slice(0, NEWS_VISIBLE);
+    const opened = openIndex !== null ? NEWS_DATA[openIndex] : null;
+
+    useEffect(() => {
+        if (openIndex === null) return;
+        const onKey = (e) => { if (e.key === "Escape") setOpenIndex(null); };
+        document.addEventListener("keydown", onKey);
+        return () => document.removeEventListener("keydown", onKey);
+    }, [openIndex]);
+
     return (
         <section className="news" id="news">
             <div className="container">
@@ -700,8 +861,8 @@ function News() {
                     <h2 className="section-title">{t.newsTitle}</h2>
                 </div>
                 <div className="news-grid">
-                    {NEWS_DATA.map((n, i) => (
-                        <a href="#" className="news-card fade-up visible" key={i}>
+                    {list.map((n, i) => (
+                        <button type="button" className="news-card fade-up" key={i} onClick={() => setOpenIndex(i)}>
                             <div className="news-img">
                                 <img src={n.img} alt="" />
                             </div>
@@ -709,14 +870,30 @@ function News() {
                                 <span className="news-date">{n.date}</span>
                                 <h3>{n.title[lang]}</h3>
                                 <p>{n.desc[lang]}</p>
+                                <span className="news-more">{t.readMore} <i className="fas fa-arrow-right"></i></span>
                             </div>
-                        </a>
+                        </button>
                     ))}
                 </div>
-                <div className="text-center mt-40">
-                    <a href="#" className="btn btn-outline btn-lg">{t.allNews}</a>
-                </div>
+                {NEWS_DATA.length > NEWS_VISIBLE && (
+                    <div className="text-center mt-40">
+                        <button type="button" className="btn btn-outline btn-lg" onClick={() => setShowAll(v => !v)}>
+                            {showAll ? t.lessNews : t.allNews}
+                        </button>
+                    </div>
+                )}
             </div>
+            {opened && (
+                <div className="modal-overlay active" onClick={() => setOpenIndex(null)}>
+                    <div className="modal news-modal" role="dialog" aria-modal="true" onClick={e => e.stopPropagation()}>
+                        <button className="modal-close" onClick={() => setOpenIndex(null)} aria-label="Close"><i className="fas fa-times"></i></button>
+                        <img className="news-modal-img" src={opened.img} alt="" />
+                        <span className="news-date">{opened.date}</span>
+                        <h2>{opened.title[lang]}</h2>
+                        <p>{(NEWS_BODY[openIndex] && NEWS_BODY[openIndex][lang]) || opened.desc[lang]}</p>
+                    </div>
+                </div>
+            )}
         </section>
     );
 }
@@ -824,31 +1001,53 @@ function Footer() {
     );
 }
 
-function WhatsAppFloat() {
+function FloatingActions() {
+    const t = useT();
+    const [showTop, setShowTop] = useState(false);
+
+    useEffect(() => {
+        const onScroll = () => setShowTop(window.scrollY > 600);
+        onScroll();
+        window.addEventListener("scroll", onScroll, { passive: true });
+        return () => window.removeEventListener("scroll", onScroll);
+    }, []);
+
     return (
-        <a href="https://wa.me/77071126671" className="whatsapp-float" aria-label="WhatsApp" target="_blank" rel="noopener noreferrer">
-            <i className="fab fa-whatsapp"></i>
-        </a>
+        <div className="float-stack">
+            <button
+                type="button"
+                className={`float-btn to-top-float ${showTop ? "shown" : ""}`}
+                aria-label={t.toTop}
+                title={t.toTop}
+                tabIndex={showTop ? 0 : -1}
+                onClick={() => window.scrollTo({ top: 0, behavior: "smooth" })}
+            >
+                <i className="fas fa-arrow-up"></i>
+            </button>
+            <a href="tel:+77077777777" className="float-btn call-float" aria-label={t.callUs} title={t.callUs}>
+                <i className="fas fa-phone"></i>
+            </a>
+            <a href="https://wa.me/77071126671" className="float-btn whatsapp-float" aria-label="WhatsApp" title="WhatsApp" target="_blank" rel="noopener noreferrer">
+                <i className="fab fa-whatsapp"></i>
+            </a>
+        </div>
     );
 }
 
 function Modal({ active, onClose }) {
     const t = useT();
-    const [name, setName] = useState('');
-    const [phone, setPhone] = useState('');
-    const [service, setService] = useState('');
-    const [consent, setConsent] = useState(false);
-    const [submitted, setSubmitted] = useState(false);
+    const [formKey, setFormKey] = useState(0);
 
-    const handleSubmit = (e) => {
-        e.preventDefault();
-        submitAppointment({ name, phone, service });
-        setSubmitted(true);
-        setName(''); setPhone(''); setService(''); setConsent(false);
-    };
+    useEffect(() => {
+        if (!active) return;
+        const onKey = (e) => { if (e.key === "Escape") handleClose(); };
+        document.addEventListener("keydown", onKey);
+        return () => document.removeEventListener("keydown", onKey);
+    }, [active]);
 
+    // При закрытии сбрасываем форму, чтобы при следующем открытии она была пустой
     const handleClose = () => {
-        setSubmitted(false);
+        setFormKey(k => k + 1);
         onClose();
     };
 
@@ -856,36 +1055,57 @@ function Modal({ active, onClose }) {
 
     return (
         <div className="modal-overlay active" onClick={handleClose}>
-            <div className="modal" onClick={e => e.stopPropagation()}>
-                <button className="modal-close" onClick={handleClose}><i className="fas fa-times"></i></button>
+            <div className="modal" role="dialog" aria-modal="true" onClick={e => e.stopPropagation()}>
+                <button className="modal-close" onClick={handleClose} aria-label="Close"><i className="fas fa-times"></i></button>
                 <h2>{t.modalTitle}</h2>
                 <p>{t.modalDesc}</p>
-                {submitted ? (
-                    <div className="form-success-msg">
-                        <i className="fas fa-check-circle"></i>
-                        <p>{t.formSuccess}</p>
-                    </div>
-                ) : (
-                    <form className="modal-form" onSubmit={handleSubmit}>
-                        <input type="text" placeholder={t.formName} value={name} onChange={e => setName(e.target.value)} required />
-                        <input type="tel" placeholder={t.formPhone} value={phone} onChange={e => setPhone(e.target.value)} required />
-                        <select value={service} onChange={e => setService(e.target.value)}>
-                            <option value="">{t.formService}</option>
-                            {t.serviceOptions.map((opt, i) => <option key={i} value={opt}>{opt}</option>)}
-                        </select>
-                        <label className="checkbox-label">
-                            <input type="checkbox" checked={consent} onChange={e => setConsent(e.target.checked)} required />
-                            <span>{t.formConsent}</span>
-                        </label>
-                        <button type="submit" className="btn btn-primary btn-lg btn-block">{t.formSubmit}</button>
-                    </form>
-                )}
+                <BookingForm key={formKey} variant="modal" onDone={handleClose} />
             </div>
         </div>
     );
 }
 
+// Плавное появление блоков при прокрутке: элементы с классом fade-up и заголовки секций
+function useScrollReveal() {
+    useEffect(() => {
+        const SELECTOR = ".fade-up:not(.visible), .section-header:not(.visible)";
+        const root = document.getElementById("root");
+        const reduce = window.matchMedia && window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+
+        if (reduce || !("IntersectionObserver" in window)) {
+            const showAll = () => document.querySelectorAll(SELECTOR).forEach(el => el.classList.add("visible"));
+            showAll();
+            const mo = new MutationObserver(showAll);
+            mo.observe(root, { childList: true, subtree: true });
+            return () => mo.disconnect();
+        }
+
+        const io = new IntersectionObserver((entries) => {
+            // Карточки, появившиеся одновременно, выезжают по очереди с небольшой задержкой
+            entries.filter(e => e.isIntersecting).forEach((e, i) => {
+                const el = e.target;
+                el.style.transitionDelay = Math.min(i, 5) * 90 + "ms";
+                el.classList.add("visible");
+                io.unobserve(el);
+                setTimeout(() => { el.style.transitionDelay = ""; }, 1200);
+            });
+        }, { threshold: 0.12, rootMargin: "0px 0px -40px 0px" });
+
+        const observeNew = () => document.querySelectorAll(SELECTOR).forEach(el => {
+            if (el.dataset.reveal) return;
+            el.dataset.reveal = "1";
+            io.observe(el);
+        });
+        observeNew();
+        // Новые карточки (смена фильтра услуг, «Все новости») тоже подхватываются
+        const mo = new MutationObserver(observeNew);
+        mo.observe(root, { childList: true, subtree: true });
+        return () => { io.disconnect(); mo.disconnect(); };
+    }, []);
+}
+
 function App() {
+    useScrollReveal();
     const [lang, setLang] = useState('ru');
     // Если перевода для языка нет, используем русский, чтобы сайт не падал
     const t = TRANSLATIONS[lang] || TRANSLATIONS.ru;
@@ -911,7 +1131,7 @@ function App() {
             <Requisites />
             <Contacts />
             <Footer />
-            <WhatsAppFloat />
+            <FloatingActions />
             <Modal active={modalActive} onClose={() => setModalActive(false)} />
         </LanguageContext.Provider>
     );

@@ -51,6 +51,9 @@
             border-radius: 10px; margin-bottom: 20px; font-size: 14px;
         }
         .count { font-size: 14px; color: #555; }
+        .badge-slot { background: #e8f5e9; color: #2e7d32; font-weight: 600; white-space: nowrap; }
+        .muted { color: #999; font-size: 13px; }
+        .wrap { max-width: 1200px; }
         @media (max-width: 640px) {
             table, thead { display: block; }
             thead { display: none; }
@@ -117,14 +120,18 @@
                         '<td data-label="ID">' + r.id + '</td>' +
                         '<td data-label="Имя">' + escapeHtml(r.name) + '</td>' +
                         '<td data-label="Телефон"><a href="tel:' + escapeHtml(r.phone) + '">' + escapeHtml(r.phone) + '</a></td>' +
+                        '<td data-label="Авто">' + escapeHtml(r.car || '—') + '</td>' +
                         '<td data-label="Услуга"><span class="badge">' + escapeHtml(r.service || '—') + '</span></td>' +
-                        '<td data-label="Дата">' + fmtDate(r.created_at) + '</td>' +
+                        '<td data-label="Запись">' + (r.appt_date
+                            ? '<span class="badge badge-slot">' + escapeHtml(r.appt_date.split('-').reverse().join('.') + ' ' + (r.appt_time || '')) + '</span>'
+                            : '<span class="muted">перезвонить</span>') + '</td>' +
+                        '<td data-label="Создана">' + fmtDate(r.created_at) + '</td>' +
                     '</tr>'
                 ).join('');
 
                 content.innerHTML =
                     '<table><thead><tr>' +
-                        '<th>ID</th><th>Имя</th><th>Телефон</th><th>Услуга</th><th>Дата</th>' +
+                        '<th>ID</th><th>Имя</th><th>Телефон</th><th>Авто</th><th>Услуга</th><th>Запись</th><th>Создана</th>' +
                     '</tr></thead><tbody>' + rowsHtml + '</tbody></table>';
             } catch (err) {
                 setError('Не удалось загрузить заявки: ' + err.message);
